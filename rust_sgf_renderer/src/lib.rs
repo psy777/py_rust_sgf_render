@@ -1,14 +1,13 @@
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
-use skia_safe::{Paint, Color, surfaces, EncodedImageFormat, Image, Typeface, Font, Data, FontMgr};
+use skia_safe::{Paint, Color, surfaces, EncodedImageFormat, Image, Font, Data, FontMgr};
 use std::fs::File;
 use std::io::Write;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
 struct Move {
-    color: char,  // 'B' for black, 'W' for white
     x: usize,
     y: usize,
+    color: char,
 }
 
 struct BoardSize {
@@ -45,110 +44,21 @@ fn parse_board_size(sgf: &str) -> BoardSize {
     }
 }
 
-fn get_captures(moves: &[Move], board_width: usize, board_height: usize) -> Vec<Move> {
-    let mut board = vec![vec![None; board_height]; board_width];
-    let mut captures = Vec::new();
-    
-    // Play through the moves
-    for &mv in moves {
-        if mv.x >= board_width || mv.y >= board_height {
-            continue;
-        }
-        
-        board[mv.x][mv.y] = Some(mv);
-        
-        // Check for captures
-        let neighbors = [
-            (mv.x.wrapping_sub(1), mv.y),
-            (mv.x + 1, mv.y),
-            (mv.x, mv.y.wrapping_sub(1)),
-            (mv.x, mv.y + 1),
-        ];
-        
-        for (x, y) in neighbors {
-            if x >= board_width || y >= board_height {
-                continue;
-            }
-            
-            if let Some(neighbor) = board[x][y] {
-                if neighbor.color != mv.color {
-                    // Check if this group is captured
-                    let mut group = Vec::new();
-                    let mut visited = vec![vec![false; board_height]; board_width];
-                    let mut has_liberties = false;
-                    
-                    fn find_group(
-                        x: usize,
-                        y: usize,
-                        color: char,
-                        board: &[Vec<Option<Move>>],
-                        visited: &mut Vec<Vec<bool>>,
-                        group: &mut Vec<Move>,
-                        has_liberties: &mut bool,
-                    ) {
-                        if visited[x][y] {
-                            return;
-                        }
-                        visited[x][y] = true;
-                        
-                        if let Some(stone) = board[x][y] {
-                            if stone.color == color {
-                                group.push(stone);
-                                
-                                // Check neighbors
-                                let neighbors = [
-                                    (x.wrapping_sub(1), y),
-                                    (x + 1, y),
-                                    (x, y.wrapping_sub(1)),
-                                    (x, y + 1),
-                                ];
-                                
-                                for &(nx, ny) in &neighbors {
-                                    if nx >= board.len() || ny >= board[0].len() {
-                                        continue;
-                                    }
-                                    
-                                    if board[nx][ny].is_none() {
-                                        *has_liberties = true;
-                                    } else if board[nx][ny].unwrap().color == color {
-                                        find_group(nx, ny, color, board, visited, group, has_liberties);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    
-                    find_group(x, y, neighbor.color, &board, &mut visited, &mut group, &mut has_liberties);
-                    
-                    if !has_liberties {
-                        for captured in &group {
-                            board[captured.x][captured.y] = None;
-                            captures.push(*captured);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    captures
-}
-
 fn parse_coord(coord: &str) -> Option<(usize, usize)> {
     if coord.len() != 2 {
         return None;
     }
     let x = (coord.chars().nth(0)? as u8 - b'a') as usize;
-    let y = (18 - (coord.chars().nth(1)? as u8 - b'a') as usize); // Flip y-coordinate since SGF uses top-down coordinates
+    let y = (coord.chars().nth(1)? as u8 - b'a') as usize;
     Some((x, y))
 }
 
 fn parse_sgf(sgf: &str) -> Vec<Move> {
     let mut moves = Vec::new();
     let mut chars = sgf.chars().peekable();
-    let mut in_comment = false;
     let mut in_variation = false;
     let mut paren_depth = 0;
+    let mut debug_count = 0;
     
     while let Some(c) = chars.next() {
         match c {
@@ -166,14 +76,7 @@ fn parse_sgf(sgf: &str) -> Vec<Move> {
                     in_variation = false;
                 }
             }
-            'C' if chars.peek() == Some(&'[') => {
-                in_comment = true;
-                chars.next(); // skip '['
-            }
-            ']' if in_comment => {
-                in_comment = false;
-            }
-            'B' | 'W' if !in_variation && !in_comment && chars.peek() == Some(&'[') => {
+            'B' | 'W' if !in_variation && chars.peek() == Some(&'[') => {
                 let color = c;
                 chars.next(); // skip '['
                 let mut coord = String::new();
@@ -183,20 +86,17 @@ fn parse_sgf(sgf: &str) -> Vec<Move> {
                     }
                     coord.push(c);
                 }
-                if coord.len() == 2 {
-                    if let Some((x, y)) = parse_coord(&coord) {
-                        moves.push(Move { color, x, y });
-                    }
+                if let Some((x, y)) = parse_coord(&coord) {
+                    debug_count += 1;
+                    println!("Found move {}: {} at ({}, {})", debug_count, color, x, y);
+                    moves.push(Move { x, y, color });
                 }
             }
-            _ if !in_comment => {
-                // Skip any other content when not in a comment
-                if chars.peek() == Some(&'[') {
-                    chars.next(); // skip '['
-                    while let Some(c) = chars.next() {
-                        if c == ']' {
-                            break;
-                        }
+            '[' => {
+                // Skip property values
+                while let Some(c) = chars.next() {
+                    if c == ']' {
+                        break;
                     }
                 }
             }
@@ -207,13 +107,12 @@ fn parse_sgf(sgf: &str) -> Vec<Move> {
 }
 
 #[pyfunction]
-#[pyo3(signature = (sgf_content, output_path, theme, kifu=None))]
-fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: Option<bool>) -> PyResult<()> {
+#[pyo3(signature = (sgf_content, output_path, theme="dark", kifu=false))]
+fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: bool) -> PyResult<()> {
+    // Parse board size from SGF content
     let board_size = parse_board_size(sgf_content);
     let board_width = board_size.width;
     let board_height = board_size.height;
-    let show_kifu = kifu.unwrap_or(true);
-    
     let canvas_width = 800;
     let canvas_height = 800;
     
@@ -223,33 +122,51 @@ fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: Option<bo
     // Calculate offsets to center the board
     let offset_x = (canvas_width as f32 - cell_size * (board_width as f32 - 1.0)) / 2.0;
     let offset_y = (canvas_height as f32 - cell_size * (board_height as f32 - 1.0)) / 2.0;
-
     // Create a new surface
     let mut surface = surfaces::raster_n32_premul((canvas_width, canvas_height))
         .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to create surface"))?;
+
     let canvas = surface.canvas();
 
-    // Set up paint for grid lines
+    // Set the background based on the theme
+    match theme {
+        "dark" => {
+            let data = Data::new_copy(include_bytes!("dark_board.png"));
+            if let Some(img) = Image::from_encoded(data) {
+                canvas.draw_image(&img, (0, 0), None);
+            }
+        }
+        "light" => {
+            let data = Data::new_copy(include_bytes!("light_board.png"));
+            if let Some(img) = Image::from_encoded(data) {
+                canvas.draw_image(&img, (0, 0), None);
+            }
+        }
+        _ => {
+            canvas.clear(Color::WHITE);
+        }
+    };
+
+    // Draw the grid
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
-    paint.set_color(Color::BLACK);
-    paint.set_stroke_width(1.0);
 
-    // Draw vertical and horizontal lines
-    for i in 0..board_width {
-        let x = offset_x + i as f32 * cell_size;
-        canvas.draw_line(
-            (x, offset_y),
-            (x, offset_y + (board_height as f32 - 1.0) * cell_size),
-            &paint
-        );
-    }
-    
+    // Draw horizontal lines
     for i in 0..board_height {
         let y = offset_y + i as f32 * cell_size;
         canvas.draw_line(
             (offset_x, y),
             (offset_x + (board_width as f32 - 1.0) * cell_size, y),
+            &paint
+        );
+    }
+
+    // Draw vertical lines
+    for i in 0..board_width {
+        let x = offset_x + i as f32 * cell_size;
+        canvas.draw_line(
+            (x, offset_y),
+            (x, offset_y + (board_height as f32 - 1.0) * cell_size),
             &paint
         );
     }
@@ -268,48 +185,17 @@ fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: Option<bo
         }
     }
 
-    // Set up text paint with basic font
-    let mut text_paint = Paint::new();
-    text_paint.set_anti_alias(true);
-    text_paint.set_text_size(cell_size * 0.6);
-    text_paint.set_text_align(skia_safe::paint::Align::Center);
-
-    // Try to load the font with error handling
+    // Load the Oswald font for kifu rendering
     let font_data = Data::new_copy(include_bytes!("Oswald-VariableFont_wght.ttf"));
-    let typeface = match Typeface::from_data(font_data, None) {
-        Some(tf) => {
-            eprintln!("Successfully loaded Oswald font");
-            tf
-        },
-        None => {
-            eprintln!("Failed to load Oswald font, using default font");
-            FontMgr::new().legacy_make_typeface(None)
-                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to load any font"))?
-        }
-    };
-
-    // Set up text parameters directly on the paint
-    text_paint.set_typeface(typeface);
-    text_paint.set_text_size(cell_size * 0.6);
-    text_paint.set_text_encoding(skia_safe::paint::TextEncoding::UTF8);
-
-    // First pass: Draw all stones
+    let font_mgr = FontMgr::new();
+    let typeface = font_mgr.new_from_data(font_data.as_bytes(), 0).unwrap();
+    let font = Font::new(typeface, cell_size * 0.6); // Further increased font size for better visibility
+    // Parse and draw moves with kifu
     let moves = parse_sgf(sgf_content);
-    let captures = if !show_kifu {
-        get_captures(&moves, board_width, board_height)
-    } else {
-        Vec::new()
-    };
-
-    // Draw stones first
     for mv in &moves {
-        if !show_kifu && captures.contains(mv) {
-            continue;
-        }
-
         let cx = offset_x + mv.x as f32 * cell_size;
         let cy = offset_y + mv.y as f32 * cell_size;
-        let stone_size = cell_size * 0.5;
+        let stone_size = cell_size * 0.5; // Same size for all themes
 
         if theme == "paper" {
             let mut stone_paint = Paint::default();
@@ -356,44 +242,49 @@ fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: Option<bo
                 );
             }
         }
-    }
-
-    // Second pass: Draw all move numbers on top of stones
-    if show_kifu {
-        for mv in &moves {
-            if !show_kifu && captures.contains(mv) {
-                continue;
-            }
-
-            let cx = offset_x + mv.x as f32 * cell_size;
-            let cy = offset_y + mv.y as f32 * cell_size;
+        // Only draw move numbers if kifu is true
+        if kifu {
             let move_number = moves.iter().position(|m| m.x == mv.x && m.y == mv.y).unwrap() + 1;
             let text = move_number.to_string();
-
-            // Draw text with outline for better visibility
-            text_paint.set_stroke_width(3.0);
-            text_paint.set_style(skia_safe::paint::Style::Stroke);
-            text_paint.set_color(if mv.color == 'B' { Color::BLACK } else { Color::WHITE });
-            canvas.draw_str(&text, (cx, cy), &text_paint);
             
-            text_paint.set_style(skia_safe::paint::Style::Fill);
-            text_paint.set_color(if mv.color == 'B' { Color::WHITE } else { Color::BLACK });
-            canvas.draw_str(&text, (cx, cy), &text_paint);
+            // Create outline effect for better visibility
+            let mut outline_paint = Paint::default();
+            outline_paint.set_style(skia_safe::paint::Style::Stroke);
+            outline_paint.set_stroke_width(3.0);
+            outline_paint.set_anti_alias(true);
+            outline_paint.set_color(if mv.color == 'B' { Color::BLACK } else { Color::WHITE });
+            
+            let mut fill_paint = Paint::default();
+            fill_paint.set_style(skia_safe::paint::Style::Fill);
+            fill_paint.set_anti_alias(true);
+            fill_paint.set_color(if mv.color == 'B' { Color::WHITE } else { Color::BLACK });
+            
+            // Center the text on the stone
+            let text_blob = skia_safe::TextBlob::new(&text, &font).unwrap();
+            let text_bounds = text_blob.bounds();
+            let text_x = cx - text_bounds.width() / 2.0;
+            let text_y = cy + text_bounds.height() / 4.0; // Adjusted vertical position
+            
+            // Draw text outline first, then fill
+            canvas.draw_text_blob(&text_blob, (text_x, text_y), &outline_paint);
+            canvas.draw_text_blob(&text_blob, (text_x, text_y), &fill_paint);
         }
     }
 
     // Save the image to a PNG file
-    let image = surface.image_snapshot();
-    #[allow(deprecated)]
-    let png_data = image.encode_to_data(EncodedImageFormat::PNG)
+    let image_data = surface.image_snapshot()
+        .encode_to_data(EncodedImageFormat::PNG)
         .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to encode image"))?;
-    let mut file = File::create(output_path)?;
-    file.write_all(png_data.as_bytes())?;
+
+    let mut file = File::create(output_path)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
+    
+    file.write_all(image_data.as_bytes())
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e.to_string()))?;
 
     Ok(())
 }
 
-/// Python module
 #[pymodule]
 fn rust_sgf_renderer(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(render_sgf, m)?)?;
