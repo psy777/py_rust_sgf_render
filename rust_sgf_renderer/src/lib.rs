@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
-use skia_safe::{Canvas, Paint, Color, Surface, EncodedImageFormat, Image, Typeface, Font, Data, Point};
+use skia_safe::{Paint, Color, surfaces, EncodedImageFormat, Image, Typeface, Font, Data};
 use std::fs::File;
 use std::io::Write;
 
@@ -146,10 +146,34 @@ fn parse_coord(coord: &str) -> Option<(usize, usize)> {
 fn parse_sgf(sgf: &str) -> Vec<Move> {
     let mut moves = Vec::new();
     let mut chars = sgf.chars().peekable();
+    let mut in_comment = false;
+    let mut in_variation = false;
+    let mut paren_depth = 0;
     
     while let Some(c) = chars.next() {
         match c {
-            'B' | 'W' if chars.peek() == Some(&'[') => {
+            '(' => {
+                paren_depth += 1;
+                if paren_depth > 1 {
+                    in_variation = true;
+                }
+            }
+            ')' => {
+                if paren_depth > 0 {
+                    paren_depth -= 1;
+                }
+                if paren_depth <= 1 {
+                    in_variation = false;
+                }
+            }
+            'C' if chars.peek() == Some(&'[') => {
+                in_comment = true;
+                chars.next(); // skip '['
+            }
+            ']' if in_comment => {
+                in_comment = false;
+            }
+            'B' | 'W' if !in_variation && !in_comment && chars.peek() == Some(&'[') => {
                 let color = c;
                 chars.next(); // skip '['
                 let mut coord = String::new();
@@ -159,8 +183,21 @@ fn parse_sgf(sgf: &str) -> Vec<Move> {
                     }
                     coord.push(c);
                 }
-                if let Some((x, y)) = parse_coord(&coord) {
-                    moves.push(Move { color, x, y });
+                if coord.len() == 2 {
+                    if let Some((x, y)) = parse_coord(&coord) {
+                        moves.push(Move { color, x, y });
+                    }
+                }
+            }
+            _ if !in_comment => {
+                // Skip any other content when not in a comment
+                if chars.peek() == Some(&'[') {
+                    chars.next(); // skip '['
+                    while let Some(c) = chars.next() {
+                        if c == ']' {
+                            break;
+                        }
+                    }
                 }
             }
             _ => continue,
@@ -170,6 +207,7 @@ fn parse_sgf(sgf: &str) -> Vec<Move> {
 }
 
 #[pyfunction]
+#[pyo3(signature = (sgf_content, output_path, theme, kifu=None))]
 fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: Option<bool>) -> PyResult<()> {
     let board_size = parse_board_size(sgf_content);
     let board_width = board_size.width;
@@ -187,44 +225,7 @@ fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: Option<bo
     let offset_y = (canvas_height as f32 - cell_size * (board_height as f32 - 1.0)) / 2.0;
 
     // Create a new surface
-    let mut surface = Surface::new_raster_n32_premul((canvas_width, canvas_height))
-        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to create surface"))?;
-
-    let canvas = surface.canvas();
-
-    // Set the background based on the theme
-    match theme {
-        "dark" => {
-            let data = Data::new_copy(include_bytes!("dark_board.png"));
-            if let Some(img) = Image::from_encoded(data) {
-                canvas.draw_image(&img, (0, 0), None);
-            }
-        }
-        "light" => {
-            let data = Data::new_copy(include_bytes!("light_board.png"));
-            if let Some(img) = Image::from_encoded(data) {
-                canvas.draw_image(&img, (0, 0), None);
-            }
-        }
-        _ => {
-            canvas.clear(Color::WHITE);
-        }
-    };
-
-    // Draw the grid
-    let mut paint = Paint::default();
-    paint.set_color(Color::BLACK);
-    paint.set_stroke_width(2.0);
-    paint.set_anti_alias(true);
-
-    // Draw horizontal lines
-    for i in 0..board_height {
-        let y = offset_y + i as f32 * cell_size;
-        canvas.draw_line(
-            (offset_x, y),
-            (offset_x + (board_width as f32 - 1.0) * cell_size, y),
-            &paint
-        );
+    let mut surface = surfaces::raster_n32_premul((canvas_width, canvas_height))
     }
 
     // Draw vertical lines
@@ -251,10 +252,9 @@ fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: Option<bo
         }
     }
 
-    // Load the Oswald font for kifu rendering
-    let font_data = Data::new_copy(include_bytes!("Oswald-VariableFont_wght.ttf"));
-    let typeface = Typeface::from_data(font_data, 0).unwrap();
-    let font = Font::new(typeface, cell_size * 0.45); // Increased font size
+    // Create a default font for kifu rendering
+    let base_font = Font::default();
+    let sized_font = base_font.with_size(cell_size * 0.45).unwrap_or_else(|| base_font.clone());
 
     // Parse moves and get captures
     let moves = parse_sgf(sgf_content);
@@ -329,7 +329,8 @@ fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: Option<bo
             text_paint.set_anti_alias(true);
             
             // Center the text on the stone
-            let text_blob = skia_safe::TextBlob::new(&text, &font).unwrap();
+            let text_blob = skia_safe::TextBlob::new(&text, &sized_font)
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to create text blob"))?;
             let text_bounds = text_blob.bounds();
             let text_x = cx - text_bounds.width() / 2.0;
             let text_y = cy + text_bounds.height() / 3.0; // Adjusted for better vertical centering
@@ -339,6 +340,7 @@ fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: Option<bo
 
     // Save the image to a PNG file
     let image = surface.image_snapshot();
+    #[allow(deprecated)]
     let png_data = image.encode_to_data(EncodedImageFormat::PNG)
         .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to encode image"))?;
     let mut file = File::create(output_path)?;
@@ -347,6 +349,7 @@ fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: Option<bo
     Ok(())
 }
 
+/// Python module
 #[pymodule]
 fn rust_sgf_renderer(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(render_sgf, m)?)?;

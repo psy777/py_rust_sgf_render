@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-pyo3 = { version = "0.20.0", features = ["extension-module"] }
-skia-safe = "0.52.0"
+pyo3 = { version = "0.20.3", features = ["extension-module", "abi3", "abi3-py37"] }
+skia-safe = "0.81.0"
 
 [lib]
 name = "rust_sgf_renderer"
