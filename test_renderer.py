@@ -1,25 +1,23 @@
-from rust_sgf_renderer import render_sgf
+from rust_sgf_renderer import render_sgf as _render_sgf
 
-def render(sgf_content, **kwargs):
-    defaults = {
-        "output_path": "output.png",
-        "theme": "paper",
-        "board_width": 19,
-        "board_height": 19,
-    }
-    # Merge defaults with user overrides
-    final = {**defaults, **kwargs}
+def render_sgf(sgf_content, output_path, **kwargs):
+    """
+    Render an SGF file to a PNG image.
+    
+    Args:
+        sgf_content (str): The SGF file content to render
+        output_path (str): The output PNG file path
+        **kwargs: Optional arguments
+            theme (str): "light", "dark", or "paper" (default: "paper")
+            kifu (bool): Whether to show move numbers and keep all stones visible (default: False)
+    """
+    theme = kwargs.get('theme', 'dark')
+    kifu = kwargs.get('kifu', False)
+    _render_sgf(sgf_content, output_path, theme=theme, kifu=kifu)
 
-    render_sgf(
-        sgf_content,
-        final["output_path"],
-        final["theme"],
-        final["board_width"],
-        final["board_height"],
-    )
-
-# Read the SGF content from an sgf file called game_4.sgf
-with open("game_4.sgf", "r", encoding="utf-8") as file:
+# Read the SGF content from the game file
+with open("game_1.sgf", "r", encoding="utf-8") as file:
     sgf_content = file.read()
 
-render(sgf_content)
+# Render the SGF to PNG files with different themes
+render_sgf(sgf_content, "yunzi_dark.png", theme="dark")

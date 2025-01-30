@@ -4,11 +4,134 @@ use skia_safe::{Canvas, Paint, Color, Surface, EncodedImageFormat, Image, Typefa
 use std::fs::File;
 use std::io::Write;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Move {
     color: char,  // 'B' for black, 'W' for white
     x: usize,
     y: usize,
+}
+
+struct BoardSize {
+    width: usize,
+    height: usize,
+}
+
+fn parse_board_size(sgf: &str) -> BoardSize {
+    if let Some(sz_start) = sgf.find("SZ[") {
+        let sz_content = &sgf[sz_start + 3..];
+        if let Some(sz_end) = sz_content.find(']') {
+            let sz_value = &sz_content[..sz_end];
+            if let Some(colon_pos) = sz_value.find(':') {
+                // Rectangular board size (e.g., "SZ[3:19]")
+                if let (Ok(width), Ok(height)) = (
+                    sz_value[..colon_pos].parse::<usize>(),
+                    sz_value[colon_pos + 1..].parse::<usize>(),
+                ) {
+                    return BoardSize { width, height };
+                }
+            } else if let Ok(size) = sz_value.parse::<usize>() {
+                // Square board size (e.g., "SZ[19]")
+                return BoardSize {
+                    width: size,
+                    height: size,
+                };
+            }
+        }
+    }
+    // Default to 19x19 if no valid size found
+    BoardSize {
+        width: 19,
+        height: 19,
+    }
+}
+
+fn get_captures(moves: &[Move], board_width: usize, board_height: usize) -> Vec<Move> {
+    let mut board = vec![vec![None; board_height]; board_width];
+    let mut captures = Vec::new();
+    
+    // Play through the moves
+    for &mv in moves {
+        if mv.x >= board_width || mv.y >= board_height {
+            continue;
+        }
+        
+        board[mv.x][mv.y] = Some(mv);
+        
+        // Check for captures
+        let neighbors = [
+            (mv.x.wrapping_sub(1), mv.y),
+            (mv.x + 1, mv.y),
+            (mv.x, mv.y.wrapping_sub(1)),
+            (mv.x, mv.y + 1),
+        ];
+        
+        for (x, y) in neighbors {
+            if x >= board_width || y >= board_height {
+                continue;
+            }
+            
+            if let Some(neighbor) = board[x][y] {
+                if neighbor.color != mv.color {
+                    // Check if this group is captured
+                    let mut group = Vec::new();
+                    let mut visited = vec![vec![false; board_height]; board_width];
+                    let mut has_liberties = false;
+                    
+                    fn find_group(
+                        x: usize,
+                        y: usize,
+                        color: char,
+                        board: &[Vec<Option<Move>>],
+                        visited: &mut Vec<Vec<bool>>,
+                        group: &mut Vec<Move>,
+                        has_liberties: &mut bool,
+                    ) {
+                        if visited[x][y] {
+                            return;
+                        }
+                        visited[x][y] = true;
+                        
+                        if let Some(stone) = board[x][y] {
+                            if stone.color == color {
+                                group.push(stone);
+                                
+                                // Check neighbors
+                                let neighbors = [
+                                    (x.wrapping_sub(1), y),
+                                    (x + 1, y),
+                                    (x, y.wrapping_sub(1)),
+                                    (x, y + 1),
+                                ];
+                                
+                                for &(nx, ny) in &neighbors {
+                                    if nx >= board.len() || ny >= board[0].len() {
+                                        continue;
+                                    }
+                                    
+                                    if board[nx][ny].is_none() {
+                                        *has_liberties = true;
+                                    } else if board[nx][ny].unwrap().color == color {
+                                        find_group(nx, ny, color, board, visited, group, has_liberties);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    find_group(x, y, neighbor.color, &board, &mut visited, &mut group, &mut has_liberties);
+                    
+                    if !has_liberties {
+                        for captured in &group {
+                            board[captured.x][captured.y] = None;
+                            captures.push(*captured);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    captures
 }
 
 fn parse_coord(coord: &str) -> Option<(usize, usize)> {
@@ -47,7 +170,12 @@ fn parse_sgf(sgf: &str) -> Vec<Move> {
 }
 
 #[pyfunction]
-fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, board_width: usize, board_height: usize) -> PyResult<()> {
+fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: Option<bool>) -> PyResult<()> {
+    let board_size = parse_board_size(sgf_content);
+    let board_width = board_size.width;
+    let board_height = board_size.height;
+    let show_kifu = kifu.unwrap_or(false);
+    
     let canvas_width = 800;
     let canvas_height = 800;
     
@@ -57,6 +185,7 @@ fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, board_width: us
     // Calculate offsets to center the board
     let offset_x = (canvas_width as f32 - cell_size * (board_width as f32 - 1.0)) / 2.0;
     let offset_y = (canvas_height as f32 - cell_size * (board_height as f32 - 1.0)) / 2.0;
+
     // Create a new surface
     let mut surface = Surface::new_raster_n32_premul((canvas_width, canvas_height))
         .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to create surface"))?;
@@ -127,9 +256,20 @@ fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, board_width: us
     let typeface = Typeface::from_data(font_data, 0).unwrap();
     let font = Font::new(typeface, cell_size * 0.45); // Increased font size
 
-    // Parse and draw moves with kifu
+    // Parse moves and get captures
     let moves = parse_sgf(sgf_content);
+    let captures = if !show_kifu {
+        get_captures(&moves, board_width, board_height)
+    } else {
+        Vec::new()
+    };
+
     for mv in &moves {
+        // Skip captured stones when not in kifu mode
+        if !show_kifu && captures.contains(mv) {
+            continue;
+        }
+
         let cx = offset_x + mv.x as f32 * cell_size;
         let cy = offset_y + mv.y as f32 * cell_size;
         let stone_size = cell_size * 0.5; // Same size for all themes
@@ -180,19 +320,21 @@ fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, board_width: us
             }
         }
 
-        // Draw move number
-        let move_number = moves.iter().position(|m| m.x == mv.x && m.y == mv.y).unwrap() + 1;
-        let text = move_number.to_string();
-        let mut text_paint = Paint::default();
-        text_paint.set_color(if mv.color == 'B' { Color::WHITE } else { Color::BLACK });
-        text_paint.set_anti_alias(true);
-        
-        // Center the text on the stone
-        let text_blob = skia_safe::TextBlob::new(&text, &font).unwrap();
-        let text_bounds = text_blob.bounds();
-        let text_x = cx - text_bounds.width() / 2.0;
-        let text_y = cy + text_bounds.height() / 3.0; // Adjusted for better vertical centering
-        canvas.draw_text_blob(&text_blob, (text_x, text_y), &text_paint);
+        // Draw move number if kifu mode is enabled
+        if show_kifu {
+            let move_number = moves.iter().position(|m| m.x == mv.x && m.y == mv.y).unwrap() + 1;
+            let text = move_number.to_string();
+            let mut text_paint = Paint::default();
+            text_paint.set_color(if mv.color == 'B' { Color::WHITE } else { Color::BLACK });
+            text_paint.set_anti_alias(true);
+            
+            // Center the text on the stone
+            let text_blob = skia_safe::TextBlob::new(&text, &font).unwrap();
+            let text_bounds = text_blob.bounds();
+            let text_x = cx - text_bounds.width() / 2.0;
+            let text_y = cy + text_bounds.height() / 3.0; // Adjusted for better vertical centering
+            canvas.draw_text_blob(&text_blob, (text_x, text_y), &text_paint);
+        }
     }
 
     // Save the image to a PNG file
