@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
-use skia_safe::{Paint, Color, surfaces, EncodedImageFormat, Image, Typeface, Font, Data};
+use skia_safe::{Paint, Color, surfaces, EncodedImageFormat, Image, Typeface, Font, Data, FontMgr};
 use std::fs::File;
 use std::io::Write;
 
@@ -139,7 +139,7 @@ fn parse_coord(coord: &str) -> Option<(usize, usize)> {
         return None;
     }
     let x = (coord.chars().nth(0)? as u8 - b'a') as usize;
-    let y = (coord.chars().nth(1)? as u8 - b'a') as usize;
+    let y = (18 - (coord.chars().nth(1)? as u8 - b'a') as usize); // Flip y-coordinate since SGF uses top-down coordinates
     Some((x, y))
 }
 
@@ -212,7 +212,7 @@ fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: Option<bo
     let board_size = parse_board_size(sgf_content);
     let board_width = board_size.width;
     let board_height = board_size.height;
-    let show_kifu = kifu.unwrap_or(false);
+    let show_kifu = kifu.unwrap_or(true);
     
     let canvas_width = 800;
     let canvas_height = 800;
@@ -226,14 +226,30 @@ fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: Option<bo
 
     // Create a new surface
     let mut surface = surfaces::raster_n32_premul((canvas_width, canvas_height))
-    }
+        .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to create surface"))?;
+    let canvas = surface.canvas();
 
-    // Draw vertical lines
+    // Set up paint for grid lines
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(Color::BLACK);
+    paint.set_stroke_width(1.0);
+
+    // Draw vertical and horizontal lines
     for i in 0..board_width {
         let x = offset_x + i as f32 * cell_size;
         canvas.draw_line(
             (x, offset_y),
             (x, offset_y + (board_height as f32 - 1.0) * cell_size),
+            &paint
+        );
+    }
+    
+    for i in 0..board_height {
+        let y = offset_y + i as f32 * cell_size;
+        canvas.draw_line(
+            (offset_x, y),
+            (offset_x + (board_width as f32 - 1.0) * cell_size, y),
             &paint
         );
     }
@@ -252,11 +268,32 @@ fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: Option<bo
         }
     }
 
-    // Create a default font for kifu rendering
-    let base_font = Font::default();
-    let sized_font = base_font.with_size(cell_size * 0.45).unwrap_or_else(|| base_font.clone());
+    // Set up text paint with basic font
+    let mut text_paint = Paint::new();
+    text_paint.set_anti_alias(true);
+    text_paint.set_text_size(cell_size * 0.6);
+    text_paint.set_text_align(skia_safe::paint::Align::Center);
 
-    // Parse moves and get captures
+    // Try to load the font with error handling
+    let font_data = Data::new_copy(include_bytes!("Oswald-VariableFont_wght.ttf"));
+    let typeface = match Typeface::from_data(font_data, None) {
+        Some(tf) => {
+            eprintln!("Successfully loaded Oswald font");
+            tf
+        },
+        None => {
+            eprintln!("Failed to load Oswald font, using default font");
+            FontMgr::new().legacy_make_typeface(None)
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to load any font"))?
+        }
+    };
+
+    // Set up text parameters directly on the paint
+    text_paint.set_typeface(typeface);
+    text_paint.set_text_size(cell_size * 0.6);
+    text_paint.set_text_encoding(skia_safe::paint::TextEncoding::UTF8);
+
+    // First pass: Draw all stones
     let moves = parse_sgf(sgf_content);
     let captures = if !show_kifu {
         get_captures(&moves, board_width, board_height)
@@ -264,16 +301,16 @@ fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: Option<bo
         Vec::new()
     };
 
+    // Draw stones first
     for mv in &moves {
-        // Skip captured stones when not in kifu mode
         if !show_kifu && captures.contains(mv) {
             continue;
         }
 
         let cx = offset_x + mv.x as f32 * cell_size;
         let cy = offset_y + mv.y as f32 * cell_size;
-        let stone_size = cell_size * 0.5; // Same size for all themes
-        
+        let stone_size = cell_size * 0.5;
+
         if theme == "paper" {
             let mut stone_paint = Paint::default();
             stone_paint.set_anti_alias(true);
@@ -319,22 +356,29 @@ fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: Option<bo
                 );
             }
         }
+    }
 
-        // Draw move number if kifu mode is enabled
-        if show_kifu {
+    // Second pass: Draw all move numbers on top of stones
+    if show_kifu {
+        for mv in &moves {
+            if !show_kifu && captures.contains(mv) {
+                continue;
+            }
+
+            let cx = offset_x + mv.x as f32 * cell_size;
+            let cy = offset_y + mv.y as f32 * cell_size;
             let move_number = moves.iter().position(|m| m.x == mv.x && m.y == mv.y).unwrap() + 1;
             let text = move_number.to_string();
-            let mut text_paint = Paint::default();
-            text_paint.set_color(if mv.color == 'B' { Color::WHITE } else { Color::BLACK });
-            text_paint.set_anti_alias(true);
+
+            // Draw text with outline for better visibility
+            text_paint.set_stroke_width(3.0);
+            text_paint.set_style(skia_safe::paint::Style::Stroke);
+            text_paint.set_color(if mv.color == 'B' { Color::BLACK } else { Color::WHITE });
+            canvas.draw_str(&text, (cx, cy), &text_paint);
             
-            // Center the text on the stone
-            let text_blob = skia_safe::TextBlob::new(&text, &sized_font)
-                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Failed to create text blob"))?;
-            let text_bounds = text_blob.bounds();
-            let text_x = cx - text_bounds.width() / 2.0;
-            let text_y = cy + text_bounds.height() / 3.0; // Adjusted for better vertical centering
-            canvas.draw_text_blob(&text_blob, (text_x, text_y), &text_paint);
+            text_paint.set_style(skia_safe::paint::Style::Fill);
+            text_paint.set_color(if mv.color == 'B' { Color::WHITE } else { Color::BLACK });
+            canvas.draw_str(&text, (cx, cy), &text_paint);
         }
     }
 
