@@ -139,13 +139,10 @@ fn get_board_position(py: Python, sgf_content: &str, move_number: Option<usize>)
         let node = main_sequence.get_item(i)?;
         let get_move = node.getattr("get_move")?;
         if let Ok(color_move) = get_move.call0()?.extract::<(Option<&str>, Option<(usize, usize)>)>() {
-            if let (Some(color), Some((x, y))) = color_move {
-                // Convert coordinates safely
-                let board_x = y;  // Swap x and y
-                let board_y = x;
+            if let (Some(color), Some((row, col))) = color_move {
                 moves.push(Move {
-                    x: board_x,
-                    y: board_y,
+                    x: col,
+                    y: board_size.height - 1 - row,
                     color: if color == "b" { 'B' } else { 'W' },
                     move_number: i,
                 });
@@ -290,7 +287,6 @@ fn render_sgf(sgf_content: &str, output_path: &str, theme: &str, kifu: bool, mov
                     paint.set_anti_alias(true);
                     
                     canvas.save();
-                    canvas.rotate(180.0, Some(Point::new(cx, cy))); // Rotate 180 degrees around stone center
                     canvas.draw_image_rect(
                         &stone_img,
                         Some((&src_rect, SrcRectConstraint::Fast)),

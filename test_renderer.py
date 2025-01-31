@@ -27,4 +27,4 @@ if __name__ == "__main__":
 
     # Render different views of the game
     # 1. Full game with move numbers (kifu)
-    render(sgf_content, f"{base_path}_kifu.png", theme='paper', kifu=True)
+    render(sgf_content, f"{base_path}_kifu.png", kifu=True)
