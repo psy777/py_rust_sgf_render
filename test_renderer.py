@@ -1,30 +1,42 @@
+import os
 from rust_sgf_renderer import render_sgf as rust_render_sgf
 
-def render(sgf_content, output_path, **kwargs):
+def render(sgf_path, **kwargs):
     """
-    Render an SGF file to a PNG image.
-    
+    Render an SGF file to a PNG image with a dynamically generated output filename.
+
     Args:
-        sgf_content (str): The SGF file content to render
-        output_path (str): The output PNG file path
+        sgf_path (str): The file path of the SGF file to extract the base filename.
         **kwargs: Optional arguments
-            theme (str): "light", "dark", or "paper" (default: "paper")
-            kifu (bool): Whether to show move numbers and keep all stones visible (default: False)
-            move_number (int, optional): If provided, renders the board state after this move number.
-                                       If not provided, renders the final board state.
+            theme (str): "light", "dark", or "paper" (default: "dark").
+            kifu (bool): Whether to show move numbers and keep all stones visible (default: False).
+            move (int, optional): If provided, renders the board state after this move number.
+                                         If not provided, renders the final board state.
     """
-    theme = kwargs.get('theme', 'dark')
-    kifu = kwargs.get('kifu', False)
-    move_number = kwargs.get('move_number', None) + 1
-    rust_render_sgf(sgf_content, output_path, theme=theme, kifu=kifu, move_number=move_number)
+    theme = kwargs.get("theme", "dark")
+    kifu = kwargs.get("kifu", False)
+    move = (kwargs["move"] + 1) if "move" in kwargs else None
+
+    # Extract filename from sgf_path
+    filename = os.path.splitext(os.path.basename(sgf_path))[0]
+
+    # Determine output filename based on rendering options
+    output_path = f"{filename}_{theme}"
+    if kifu:
+        output_path += "_kifu"
+    if move is not None:
+        output_path += f"_move{move-1}"
+
+    output_path += ".png"
+
+    # Read SGF content
+    with open(sgf_path, "r", encoding="utf-8") as file:
+        sgf_content = file.read()
+
+    # Render SGF using Rust library
+    rust_render_sgf(sgf_content, output_path, theme=theme, kifu=kifu, move_number=move)
 
 # Example usage
 if __name__ == "__main__":
-    # Read the SGF content from the game file
-    with open("game_4.sgf", "r", encoding="utf-8") as file:
-        sgf_content = file.read()
-        base_path = file.name.rsplit('.', 1)[0]
-
-    # Render different views of the game
-    # 1. Full game with move numbers (kifu)
-    render(sgf_content, f"{base_path}_paper_kifu.png", theme='paper', move_number=78, kifu=True)
+    sgf_file_path = "game_4.sgf"
+    render(sgf_file_path, move=78, kifu=True)
