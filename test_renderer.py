@@ -24,8 +24,9 @@ def render(sgf_path, **kwargs):
     output_path = f"{filename}_{theme}"
     if kifu:
         output_path += "_kifu"
-    if move is not None:
+    if move > 0:
         output_path += f"_move{move-1}"
+    else: move = None
 
     output_path += ".png"
 
@@ -38,5 +39,5 @@ def render(sgf_path, **kwargs):
 
 # Example usage
 if __name__ == "__main__":
-    sgf_file_path = "game_4.sgf"
-    render(sgf_file_path, move=78, kifu=True)
+    sgf_file_path = "game_2.sgf"
+    render(sgf_file_path, move=90, kifu=True)
