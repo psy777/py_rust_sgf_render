@@ -14,9 +14,12 @@ This library provides a powerful tool for converting SGF files into clear, high-
 
 - Fast, accurate SGF to PNG conversion using Rust's performance
 - High-quality board and stone rendering with anti-aliasing
+- Support for both square and rectangular boards (2x2 to 25x25)
 - Full 19x19 board support with proper star points (hoshi)
+- Multiple themes: dark, light, and paper
+- Kifu mode for displaying move numbers
+- Move number filtering to view game state at any point
 - Accurate stone placement based on SGF coordinates
-- Support for game metadata and comments
 - Clean, minimal output focused on clarity
 
 ## Included Example Game
@@ -54,8 +57,17 @@ from rust_sgf_renderer import render_sgf
 with open("game.sgf", "r", encoding="utf-8") as file:
     sgf_content = file.read()
 
-# Render to PNG
+# Basic rendering
 render_sgf(sgf_content, "output.png")
+
+# With theme and kifu mode (showing move numbers)
+render_sgf(sgf_content, "output_kifu.png", theme="dark", kifu=True)
+
+# View game state after specific move
+render_sgf(sgf_content, "move_20.png", move_number=20)
+
+# All options combined
+render_sgf(sgf_content, "custom.png", theme="light", kifu=True, move_number=20)
 ```
 
 ## Technical Details
@@ -77,9 +89,22 @@ The renderer is implemented as a hybrid Python/Rust application, combining the b
 
 The board is rendered at 800x800 pixels with carefully calculated spacing and anti-aliasing for optimal visibility. The rendering includes:
 - Precise grid lines with proper spacing
-- Correctly positioned star points (hoshi)
+- Correctly positioned star points (hoshi) for 19x19 boards
 - Anti-aliased stones with subtle shadows
 - Clear black and white stone differentiation
+- Automatic board scaling for different sizes
+- Centered rendering for rectangular boards
+- Optional move numbers in kifu mode
+
+### Themes
+- **dark**: Dark wooden board with glass stones (default)
+- **light**: Light wooden board with glass stones
+- **paper**: Simple black and white style for documents
+
+### Board Sizes
+- Supports square boards from 2x2 to 25x25
+- Supports rectangular boards (e.g., 15:10)
+- Automatically centers and scales the board
 
 ## Project Structure
 

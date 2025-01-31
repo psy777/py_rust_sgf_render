@@ -10,16 +10,30 @@ def render(sgf_content, output_path, **kwargs):
         **kwargs: Optional arguments
             theme (str): "light", "dark", or "paper" (default: "paper")
             kifu (bool): Whether to show move numbers and keep all stones visible (default: False)
+            move_number (int, optional): If provided, renders the board state after this move number.
+                                       If not provided, renders the final board state.
     """
     theme = kwargs.get('theme', 'dark')
     kifu = kwargs.get('kifu', False)
-    rust_render_sgf(sgf_content, output_path, theme=theme, kifu=kifu)
+    move_number = kwargs.get('move_number', None)
+    rust_render_sgf(sgf_content, output_path, theme=theme, kifu=kifu, move_number=move_number)
 
-# Read the SGF content from the game file
-with open("game_4.sgf", "r", encoding="utf-8") as file:
-    sgf_content = file.read()
-    output_path = f"{file.name}_render.png"
+# Example usage
+if __name__ == "__main__":
+    # Read the SGF content from the game file
+    with open("game_2.sgf", "r", encoding="utf-8") as file:
+        sgf_content = file.read()
+        base_path = file.name.rsplit('.', 1)[0]
 
-# Render the SGF to PNG files with and without move numbers
-render(sgf_content, "output_with_numbers.png", kifu=True)
-render(sgf_content, "output_without_numbers.png", kifu=False)
+    # Render different views of the game
+    # 1. Full game with move numbers (kifu)
+    render(sgf_content, f"{base_path}_kifu.png", theme='dark', kifu=True)
+    
+    # 2. Final board state without move numbers
+    render(sgf_content, f"{base_path}_final.png", theme='dark')
+    
+    # 3. Board state after move 20
+    render(sgf_content, f"{base_path}_move20.png", theme='dark', move_number=20)
+    
+    # 4. Board state after move 20 with move numbers
+    render(sgf_content, f"{base_path}_move20_kifu.png", theme='dark', kifu=True, move_number=20)
