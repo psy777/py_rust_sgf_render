@@ -15,16 +15,16 @@ def render(sgf_content, output_path, **kwargs):
     """
     theme = kwargs.get('theme', 'dark')
     kifu = kwargs.get('kifu', False)
-    move_number = kwargs.get('move_number', None)
+    move_number = kwargs.get('move_number', None) + 1
     rust_render_sgf(sgf_content, output_path, theme=theme, kifu=kifu, move_number=move_number)
 
 # Example usage
 if __name__ == "__main__":
     # Read the SGF content from the game file
-    with open("game_2.sgf", "r", encoding="utf-8") as file:
+    with open("game_4.sgf", "r", encoding="utf-8") as file:
         sgf_content = file.read()
         base_path = file.name.rsplit('.', 1)[0]
 
     # Render different views of the game
     # 1. Full game with move numbers (kifu)
-    render(sgf_content, f"{base_path}_kifu.png", kifu=True)
+    render(sgf_content, f"{base_path}_paper_kifu.png", theme='paper', move_number=78, kifu=True)

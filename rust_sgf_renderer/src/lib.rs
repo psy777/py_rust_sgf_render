@@ -142,7 +142,7 @@ fn get_board_position(py: Python, sgf_content: &str, move_number: Option<usize>)
             if let (Some(color), Some((row, col))) = color_move {
                 moves.push(Move {
                     x: col,
-                    y: board_size.height - 1 - row,
+                    y: board_size.width - 1 - row,
                     color: if color == "b" { 'B' } else { 'W' },
                     move_number: i,
                 });
