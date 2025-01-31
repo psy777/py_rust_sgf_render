@@ -27,13 +27,4 @@ if __name__ == "__main__":
 
     # Render different views of the game
     # 1. Full game with move numbers (kifu)
-    render(sgf_content, f"{base_path}_kifu.png", theme='dark', kifu=True)
-    
-    # 2. Final board state without move numbers
-    render(sgf_content, f"{base_path}_final.png", theme='dark')
-    
-    # 3. Board state after move 20
-    render(sgf_content, f"{base_path}_move20.png", theme='dark', move_number=20)
-    
-    # 4. Board state after move 20 with move numbers
-    render(sgf_content, f"{base_path}_move20_kifu.png", theme='dark', kifu=True, move_number=20)
+    render(sgf_content, f"{base_path}_kifu.png", theme='paper', kifu=True)
