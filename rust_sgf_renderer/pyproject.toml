@@ -4,6 +4,8 @@ build-backend = "maturin"
 
 [project]
 name = "rust_sgf_renderer"
+version = "0.1.0"
+description = "SGF renderer using Skia through Rust"
 requires-python = ">=3.7"
 dependencies = [
     "sgfmill>=1.1.1"

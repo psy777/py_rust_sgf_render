@@ -15,7 +15,9 @@ def render(sgf_path, **kwargs):
     """
     theme = kwargs.get("theme", "dark")
     kifu = kwargs.get("kifu", False)
-    move = (kwargs["move"] + 1) if "move" in kwargs else None
+    move = kwargs.get("move")
+    if move is not None:
+        move += 1  # Convert to 1-based index for Rust
 
     # Extract filename from sgf_path
     filename = os.path.splitext(os.path.basename(sgf_path))[0]
@@ -24,9 +26,11 @@ def render(sgf_path, **kwargs):
     output_path = f"{filename}_{theme}"
     if kifu:
         output_path += "_kifu"
-    if move > 0:
-        output_path += f"_move{move-1}"
-    else: move = None
+    if move is not None:
+        if move < 0:
+            move = None
+        else:
+            output_path += f"_move{move-1}"  # Show original 0-based number in filename
 
     output_path += ".png"
 
@@ -40,4 +44,4 @@ def render(sgf_path, **kwargs):
 # Example usage
 if __name__ == "__main__":
     sgf_file_path = "game_2.sgf"
-    render(sgf_file_path, move=90, kifu=True)
+    render(sgf_file_path)
